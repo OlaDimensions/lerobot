@@ -99,6 +99,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .bi_so101_leader import BiSO101Leader
 
         return BiSO101Leader(config)
+    elif config.type == "one_motor":
+        from .one_motor import OneMotorTeleop
+
+        return OneMotorTeleop(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))
