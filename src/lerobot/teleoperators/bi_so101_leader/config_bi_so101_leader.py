@@ -27,3 +27,6 @@ class BiSO101LeaderConfig(TeleoperatorConfig):
 
     left_id: str | None = None
     right_id: str | None = None
+
+    # Disable observation/action for a specific arm ("left" or "right"), but keep it connected.
+    disable_arm: str | None = None

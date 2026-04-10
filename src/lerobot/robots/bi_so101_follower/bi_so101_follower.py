@@ -42,6 +42,9 @@ class BiSO101Follower(Robot):
         super().__init__(config)
         self.config = config
 
+        if config.disable_arm is not None and config.disable_arm not in ("left", "right"):
+            raise ValueError(f"disable_arm must be 'left', 'right', or None, got '{config.disable_arm}'")
+
         left_id = None
         if config.left_id:
             left_id = config.left_id
@@ -80,9 +83,12 @@ class BiSO101Follower(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors} | {
-            f"right_{motor}.pos": float for motor in self.right_arm.bus.motors
-        }
+        ft = {}
+        if self.config.disable_arm != "left":
+            ft.update({f"left_{motor}.pos": float for motor in self.left_arm.bus.motors})
+        if self.config.disable_arm != "right":
+            ft.update({f"right_{motor}.pos": float for motor in self.right_arm.bus.motors})
+        return ft
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -132,13 +138,13 @@ class BiSO101Follower(Robot):
     def get_observation(self) -> dict[str, Any]:
         obs_dict = {}
 
-        # Add "left_" prefix
-        left_obs = self.left_arm.get_observation()
-        obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
+        if self.config.disable_arm != "left":
+            left_obs = self.left_arm.get_observation()
+            obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
 
-        # Add "right_" prefix
-        right_obs = self.right_arm.get_observation()
-        obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
+        if self.config.disable_arm != "right":
+            right_obs = self.right_arm.get_observation()
+            obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
 
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
@@ -149,23 +155,23 @@ class BiSO101Follower(Robot):
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        # Remove "left_" prefix
-        left_action = {
-            key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
-        }
-        # Remove "right_" prefix
-        right_action = {
-            key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
-        }
+        result = {}
 
-        send_action_left = self.left_arm.send_action(left_action)
-        send_action_right = self.right_arm.send_action(right_action)
+        if self.config.disable_arm != "left":
+            left_action = {
+                key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
+            }
+            send_action_left = self.left_arm.send_action(left_action)
+            result.update({f"left_{key}": value for key, value in send_action_left.items()})
 
-        # Add prefixes back
-        prefixed_send_action_left = {f"left_{key}": value for key, value in send_action_left.items()}
-        prefixed_send_action_right = {f"right_{key}": value for key, value in send_action_right.items()}
+        if self.config.disable_arm != "right":
+            right_action = {
+                key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
+            }
+            send_action_right = self.right_arm.send_action(right_action)
+            result.update({f"right_{key}": value for key, value in send_action_right.items()})
 
-        return {**prefixed_send_action_left, **prefixed_send_action_right}
+        return result
 
     def disconnect(self):
         self.left_arm.disconnect()

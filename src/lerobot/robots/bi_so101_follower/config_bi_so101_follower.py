@@ -30,6 +30,9 @@ class BiSO101FollowerConfig(RobotConfig):
     left_id: str | None = None
     right_id: str | None = None
 
+    # Disable observation/action for a specific arm ("left" or "right"), but keep it connected.
+    disable_arm: str | None = None
+
     # Optional
     left_arm_disable_torque_on_disconnect: bool = True
     left_arm_max_relative_target: int | None = None

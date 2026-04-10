@@ -39,6 +39,9 @@ class BiSO101Leader(Teleoperator):
         super().__init__(config)
         self.config = config
 
+        if config.disable_arm is not None and config.disable_arm not in ("left", "right"):
+            raise ValueError(f"disable_arm must be 'left', 'right', or None, got '{config.disable_arm}'")
+
         left_id = None
         if config.left_id:
             left_id = config.left_id
@@ -68,9 +71,12 @@ class BiSO101Leader(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors} | {
-            f"right_{motor}.pos": float for motor in self.right_arm.bus.motors
-        }
+        ft = {}
+        if self.config.disable_arm != "left":
+            ft.update({f"left_{motor}.pos": float for motor in self.left_arm.bus.motors})
+        if self.config.disable_arm != "right":
+            ft.update({f"right_{motor}.pos": float for motor in self.right_arm.bus.motors})
+        return ft
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
@@ -103,31 +109,35 @@ class BiSO101Leader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         action_dict = {}
 
-        # Add "left_" prefix
-        left_action = self.left_arm.get_action()
-        action_dict.update({f"left_{key}": value for key, value in left_action.items()})
+        if self.config.disable_arm != "left":
+            left_action = self.left_arm.get_action()
+            action_dict.update({f"left_{key}": value for key, value in left_action.items()})
 
-        # Add "right_" prefix
-        right_action = self.right_arm.get_action()
-        action_dict.update({f"right_{key}": value for key, value in right_action.items()})
+        if self.config.disable_arm != "right":
+            right_action = self.right_arm.get_action()
+            action_dict.update({f"right_{key}": value for key, value in right_action.items()})
 
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # Remove "left_" prefix
-        left_feedback = {
-            key.removeprefix("left_"): value for key, value in feedback.items() if key.startswith("left_")
-        }
-        # Remove "right_" prefix
-        right_feedback = {
-            key.removeprefix("right_"): value for key, value in feedback.items() if key.startswith("right_")
-        }
+        if self.config.disable_arm != "left":
+            left_feedback = {
+                key.removeprefix("left_"): value
+                for key, value in feedback.items()
+                if key.startswith("left_")
+            }
+            if left_feedback:
+                self.left_arm.send_feedback(left_feedback)
 
-        if left_feedback:
-            self.left_arm.send_feedback(left_feedback)
-        if right_feedback:
-            self.right_arm.send_feedback(right_feedback)
+        if self.config.disable_arm != "right":
+            right_feedback = {
+                key.removeprefix("right_"): value
+                for key, value in feedback.items()
+                if key.startswith("right_")
+            }
+            if right_feedback:
+                self.right_arm.send_feedback(right_feedback)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()
-        self.right_arm.disconnect() 
+        self.right_arm.disconnect()
