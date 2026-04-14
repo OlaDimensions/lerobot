@@ -15,6 +15,8 @@
 """
 Helper to recalibrate your device (robot or teleoperator).
 
+Requires: pip install 'lerobot[hardware]'
+
 Example:
 
 ```shell
@@ -31,8 +33,8 @@ from pprint import pformat
 
 import draccus
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -57,6 +59,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,
+    openarm_mini,
     so_leader,
     unitree_g1,
 )
