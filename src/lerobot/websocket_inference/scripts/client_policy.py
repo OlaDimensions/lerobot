@@ -17,6 +17,7 @@ python -m lerobot.websocket_inference.scripts.client_policy \
       "hand_cam": {"type": "opencv", "index_or_path": 12, "width": 640, "height": 480, "fps": 30},
       "side_cam": {"type": "opencv", "index_or_path": 10, "width": 640, "height": 480, "fps": 30}
     }' \
+    --reset_pose='[-10.305, -99.649, 67.330, 95.787, -1.880, 3.119]' \
     --task="Put the toy into the box" \
     --server_host=127.0.0.1 \
     --server_port=8000 \
@@ -59,7 +60,9 @@ from lerobot.websocket_inference.client.runtime.agents.policy_agent import Polic
 from lerobot.websocket_inference.client.runtime.runtime import Runtime
 from lerobot.websocket_inference.client.websocket_client_policy import WebsocketClientPolicy
 
-logger = logging.getLogger(__name__)
+def _format_array(values: np.ndarray | list[float], precision: int = 3) -> str:
+    array = np.asarray(values, dtype=np.float32)
+    return np.array2string(array, precision=precision, floatmode="fixed")
 
 
 class LeRobotEnvironment(_environment.Environment):
@@ -78,6 +81,7 @@ class LeRobotEnvironment(_environment.Environment):
         image_width: int = 0,
         play_sounds: bool = True,
         end_episode_on_enter: bool = True,
+        log_reset_pose_candidates: int = 5,
         reset_position: list[float] | None = None,
     ) -> None:
         self._robot = robot
@@ -93,11 +97,13 @@ class LeRobotEnvironment(_environment.Environment):
         self._image_width = image_width
         self._play_sounds = play_sounds
         self._end_episode_on_enter = end_episode_on_enter and sys.stdin.isatty()
+        self._log_reset_pose_candidates = log_reset_pose_candidates
+        self._remaining_reset_pose_candidate_logs = 0
         self._episode_complete = False
         self._reset_position = None if reset_position is None else np.asarray(reset_position, dtype=np.float32)
 
         if end_episode_on_enter and not self._end_episode_on_enter:
-            logger.warning("stdin is not a TTY; disabling Enter-to-end-episode support for this run.")
+            logging.warning("stdin is not a TTY; disabling Enter-to-end-episode support for this run.")
 
         if self._reset_position is not None and len(self._reset_position) != len(self._action_keys):
             raise ValueError(
@@ -105,16 +111,38 @@ class LeRobotEnvironment(_environment.Environment):
                 f"got {len(self._reset_position)} and {len(self._action_keys)}"
             )
 
+        if self._reset_position is None:
+            logging.info("No reset_position configured; reset will only play the environment reminder.")
+        else:
+            logging.info(
+                "Configured reset_position | dims=%d | action_keys=%s | target=%s",
+                len(self._reset_position),
+                self._action_keys,
+                _format_array(self._reset_position),
+            )
+
     @override
     def reset(self) -> None:
         self._episode_complete = False
+        self._remaining_reset_pose_candidate_logs = self._log_reset_pose_candidates
         log_say("Reset the environment", play_sounds=self._play_sounds)
+
+        raw_obs = self._robot.get_observation()
+        current_position = np.array([float(raw_obs[k]) for k in self._action_keys], dtype=np.float32)
+        logging.info(
+            "Current joint state at reset | action_keys=%s | pose=%s",
+            self._action_keys,
+            _format_array(current_position),
+        )
 
         if self._reset_position is None:
             return
 
-        raw_obs = self._robot.get_observation()
-        current_position = np.array([float(raw_obs[k]) for k in self._action_keys], dtype=np.float32)
+        logging.info(
+            "Resetting robot to reset_position | current=%s | target=%s",
+            _format_array(current_position),
+            _format_array(self._reset_position),
+        )
         trajectory = np.linspace(current_position, self._reset_position, num=51, dtype=np.float32)
 
         for pose in trajectory[1:]:
@@ -122,13 +150,17 @@ class LeRobotEnvironment(_environment.Environment):
             self._robot.send_action(action_dict)
             time.sleep(0.015)
 
+        final_obs = self._robot.get_observation()
+        final_position = np.array([float(final_obs[k]) for k in self._action_keys], dtype=np.float32)
+        logging.info("Reset finished | final=%s", _format_array(final_position))
+
     @override
     def is_episode_complete(self) -> bool:
         if self._episode_complete:
             return True
 
         if self._end_episode_on_enter and enter_pressed():
-            logger.info("Episode marked complete by user")
+            logging.info("Episode marked complete by user")
             self._episode_complete = True
 
         return self._episode_complete
@@ -136,6 +168,18 @@ class LeRobotEnvironment(_environment.Environment):
     @override
     def get_observation(self) -> dict:
         raw_obs = self._robot.get_observation()
+        current_position = np.array([float(raw_obs[k]) for k in self._action_keys], dtype=np.float32)
+
+        if self._remaining_reset_pose_candidate_logs > 0:
+            sample_idx = self._log_reset_pose_candidates - self._remaining_reset_pose_candidate_logs + 1
+            logging.info(
+                "Reset pose candidate sample %d/%d | action_keys=%s | pose=%s",
+                sample_idx,
+                self._log_reset_pose_candidates,
+                self._action_keys,
+                _format_array(current_position),
+            )
+            self._remaining_reset_pose_candidate_logs -= 1
 
         state = np.array([raw_obs[k] for k in self._motor_keys], dtype=np.float32)
 
@@ -187,6 +231,14 @@ class PolicyClientConfig:
         default=True,
         metadata={"help": "Allow pressing Enter to end the current episode"},
     )
+    reset_pose: list[float] | None = field(
+        default=None,
+        metadata={"help": "Optional joint positions used to reset the robot between episodes"},
+    )
+    log_reset_pose_candidates: int = field(
+        default=5,
+        metadata={"help": "Log this many initial joint-state samples each episode to help build --reset-pose"},
+    )
     image_height: int = field(default=0, metadata={"help": "Resize images to this height (0 = no resize)"})
     image_width: int = field(default=0, metadata={"help": "Resize images to this width (0 = no resize)"})
 
@@ -195,6 +247,10 @@ class PolicyClientConfig:
             raise ValueError(f"action_horizon must be positive, got {self.action_horizon}")
         if self.max_hz <= 0:
             raise ValueError(f"max_hz must be positive, got {self.max_hz}")
+        if self.log_reset_pose_candidates < 0:
+            raise ValueError(
+                f"log_reset_pose_candidates must be non-negative, got {self.log_reset_pose_candidates}"
+            )
 
 
 @draccus.wrap()
@@ -203,25 +259,31 @@ def main(cfg: PolicyClientConfig) -> None:
 
     robot = make_robot_from_config(cfg.robot)
     robot.connect()
-    logger.info("Robot connected")
+    logging.info("Robot connected")
 
     policy = WebsocketClientPolicy(
         host=cfg.server_host,
         port=cfg.server_port,
     )
     metadata = policy.get_server_metadata()
-    logger.info("Connected to policy server | metadata: %s", metadata)
+    logging.info("Connected to policy server | metadata: %s", metadata)
 
     server_default_prompt = metadata.get("default_prompt")
     if cfg.task:
         if isinstance(server_default_prompt, str) and server_default_prompt and server_default_prompt != cfg.task:
-            logger.info("Using client task prompt and overriding server default prompt")
+            logging.info("Using client task prompt and overriding server default prompt")
         else:
-            logger.info("Using client task prompt")
+            logging.info("Using client task prompt")
     elif isinstance(server_default_prompt, str) and server_default_prompt:
-        logger.info("Using server default prompt")
+        logging.info("Using server default prompt")
     else:
         raise ValueError("No task prompt configured. Set --task on the client or --default-prompt on the server.")
+
+    reset_position = cfg.reset_pose
+    if reset_position is not None:
+        logging.info("Using client reset_pose: %s", reset_position)
+    else:
+        logging.info("No client reset_pose configured.")
 
     broker = ActionChunkBroker(policy=policy, action_horizon=cfg.action_horizon)
     agent = PolicyAgent(policy=broker)
@@ -233,7 +295,8 @@ def main(cfg: PolicyClientConfig) -> None:
         image_width=cfg.image_width,
         play_sounds=cfg.play_sounds,
         end_episode_on_enter=cfg.end_episode_on_enter,
-        reset_position=metadata.get("reset_pose"),
+        log_reset_pose_candidates=cfg.log_reset_pose_candidates,
+        reset_position=reset_position,
     )
 
     runtime = Runtime(
@@ -246,7 +309,7 @@ def main(cfg: PolicyClientConfig) -> None:
     )
 
     try:
-        logger.info(
+        logging.info(
             "Starting runtime | action_horizon=%d | max_hz=%.0f | episodes=%d | max_steps=%d",
             cfg.action_horizon,
             cfg.max_hz,
@@ -255,11 +318,11 @@ def main(cfg: PolicyClientConfig) -> None:
         )
         runtime.run()
     except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+        logging.info("Interrupted by user")
     finally:
         policy.close()
         robot.disconnect()
-        logger.info("Cleanup complete")
+        logging.info("Cleanup complete")
 
 
 if __name__ == "__main__":

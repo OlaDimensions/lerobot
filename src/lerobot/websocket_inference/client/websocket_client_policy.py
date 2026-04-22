@@ -13,9 +13,6 @@ import websockets.sync.client
 
 from lerobot.websocket_inference.client import msgpack_numpy
 
-logger = logging.getLogger(__name__)
-
-
 class WebsocketClientPolicy:
     """Implements a policy interface by communicating with a server over WebSocket.
 
@@ -44,7 +41,7 @@ class WebsocketClientPolicy:
     def _wait_for_server(
         self,
     ) -> tuple[websockets.sync.client.ClientConnection, dict[str, Any]]:
-        logger.info("Waiting for server at %s...", self._uri)
+        logging.info("Waiting for server at %s...", self._uri)
         while True:
             try:
                 conn = websockets.sync.client.connect(
@@ -55,7 +52,7 @@ class WebsocketClientPolicy:
                 metadata = msgpack_numpy.unpackb(conn.recv())
                 return conn, metadata
             except ConnectionRefusedError:
-                logger.info("Still waiting for server...")
+                logging.info("Still waiting for server...")
                 time.sleep(5)
 
     def infer(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -74,4 +71,4 @@ class WebsocketClientPolicy:
         """Close the WebSocket connection."""
         if self._ws is not None:
             self._ws.close()
-            logger.info("WebSocket connection closed")
+            logging.info("WebSocket connection closed")

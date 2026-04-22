@@ -8,18 +8,18 @@ Example command:
 python -m lerobot.websocket_inference.scripts.serve_policy \
   --host=127.0.0.1 \
   --port=8000 \
-  --policy.policy-type=smolvla \
-  --policy.pretrained-name-or-path=/path/to/model \
+  --policy.policy_type=smolvla \
+  --policy.pretrained_name_or_path=/path/to/model \
   --policy.device=cuda \
-  --default-prompt="Put the toy into the box" \
-  --actions-per-chunk=10 \
+  --default_prompt="Put the toy into the box" \
+  --actions_per_chunk=10 \
   --rename_map='{
     "observation.images.front_cam": "observation.images.camera1",
     "observation.images.hand_cam": "observation.images.camera2",
     "observation.images.side_cam": "observation.images.camera3"
   }' \
-  --wandb.no-enable \
-  --trace.no-enable
+  --wandb.enable=false \
+  --trace.enable=false
 ```
 """
 
@@ -31,8 +31,8 @@ import socket
 from pathlib import Path
 from typing import Any
 
+import draccus
 import torch
-import tyro
 
 from lerobot.async_inference.constants import SUPPORTED_POLICIES
 from lerobot.configs import PreTrainedConfig
@@ -41,9 +41,6 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
 from lerobot.websocket_inference.serving.websocket_policy_server import WebsocketPolicyServer
-
-logger = logging.getLogger(__name__)
-
 
 @dataclasses.dataclass
 class PolicyConfig:
@@ -89,9 +86,9 @@ class Args:
 
     # Similar to async inference: optionally truncate the emitted action chunk.
     actions_per_chunk: int | None = None
-    rename_map: str | None = dataclasses.field(
-        default=None,
-        metadata={"help": "Optional JSON string mapping observation keys to policy feature keys"},
+    rename_map: dict[str, str] = dataclasses.field(
+        default_factory=dict,
+        metadata={"help": "Optional mapping from observation keys to policy feature keys"},
     )
 
     # Reserved for parity with the old script.
@@ -145,26 +142,6 @@ def _build_metadata(args: Args) -> dict[str, Any]:
     return metadata
 
 
-def _parse_rename_map(rename_map: str | None) -> dict[str, str]:
-    if rename_map is None or not rename_map.strip():
-        return {}
-
-    try:
-        parsed = json.loads(rename_map)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"rename_map must be valid JSON, got: {rename_map!r}") from exc
-
-    if not isinstance(parsed, dict):
-        raise ValueError(f"rename_map must decode to a JSON object, got {type(parsed).__name__}")
-
-    result: dict[str, str] = {}
-    for key, value in parsed.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            raise ValueError("rename_map JSON object must contain only string-to-string entries")
-        result[key] = value
-    return result
-
-
 def _init_wandb(args: Args, policy) -> None:
     wandb = _load_wandb()
 
@@ -200,7 +177,7 @@ def _load_policy(args: Args):
     if args.policy.device is not None:
         config.device = args.policy.device
 
-    logger.info(
+    logging.info(
         "Loading websocket inference policy | policy_type=%s | path=%s | device=%s",
         args.policy.policy_type,
         args.policy.pretrained_name_or_path,
@@ -217,7 +194,9 @@ def _load_policy(args: Args):
     return policy
 
 
+@draccus.wrap()
 def main(args: Args) -> None:
+    init_logging()
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(args.seed)
@@ -228,13 +207,13 @@ def main(args: Args) -> None:
         raise ValueError("policy.policy_type cannot be empty")
 
     if args.record:
-        logger.warning("record=True is not implemented in serve_policy and will be ignored.")
+        logging.warning("record=True is not implemented in serve_policy and will be ignored.")
 
     if args.actions_per_chunk is not None and args.actions_per_chunk <= 0:
         raise ValueError(f"actions_per_chunk must be positive when provided, got {args.actions_per_chunk}")
 
     if args.policy.policy_type not in SUPPORTED_POLICIES:
-        logger.warning(
+        logging.warning(
             "Policy type %s is not in async_inference SUPPORTED_POLICIES=%s. "
             "Continuing because get_policy_class may still support it.",
             args.policy.policy_type,
@@ -242,9 +221,9 @@ def main(args: Args) -> None:
         )
 
     if args.wandb.enable and args.trace.enable:
-        logger.warning("Enabling wandb logging and trace profiling together will skew latency measurements.")
+        logging.warning("Enabling wandb logging and trace profiling together will skew latency measurements.")
 
-    rename_map = _parse_rename_map(args.rename_map)
+    rename_map = args.rename_map
     policy = _load_policy(args)
     device_override = {"device": str(policy.config.device)}
     preprocessor, postprocessor = make_pre_post_processors(
@@ -262,7 +241,7 @@ def main(args: Args) -> None:
 
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
-    logger.info("Creating server (host: %s, ip: %s, port: %d)", hostname, local_ip, args.port)
+    logging.info("Creating server (host: %s, ip: %s, port: %d)", hostname, local_ip, args.port)
 
     server = WebsocketPolicyServer(
         policy=policy,
@@ -276,5 +255,4 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
-    init_logging()
-    main(tyro.cli(Args))
+    main()

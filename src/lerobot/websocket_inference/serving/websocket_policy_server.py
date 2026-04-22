@@ -19,9 +19,6 @@ from lerobot.processor import PolicyProcessorPipeline
 
 from lerobot.websocket_inference.client import msgpack_numpy
 
-logger = logging.getLogger(__name__)
-
-
 class WebsocketPolicyServer:
     """Serve a policy over websockets.
 
@@ -99,13 +96,13 @@ class WebsocketPolicyServer:
             max_size=None,
             process_request=_health_check,
         ):
-            logger.info(
+            logging.info(
                 "WebSocket server started on %s:%s. Waiting for shutdown command.",
                 self._host,
                 self._port,
             )
             await self._stop_event.wait()
-            logger.info("Shutdown event received. Server exiting.")
+            logging.info("Shutdown event received. Server exiting.")
 
     async def preprocess_observation(self, observations: dict[str, Any]) -> dict[str, Any]:
         images = observations["images"]
@@ -156,7 +153,7 @@ class WebsocketPolicyServer:
         return torch.stack(processed_actions, dim=1)
 
     async def _handler(self, websocket: websockets.asyncio.server.ServerConnection) -> None:
-        logger.info("Connection from %s opened", websocket.remote_address)
+        logging.info("Connection from %s opened", websocket.remote_address)
         packer = msgpack_numpy.Packer()
 
         await websocket.send(packer.pack(self._metadata))
@@ -168,7 +165,7 @@ class WebsocketPolicyServer:
                 obs = msgpack_numpy.unpackb(await websocket.recv(), raw=False)
 
                 if isinstance(obs, dict) and obs.get("command") == "exit":
-                    logger.info(
+                    logging.info(
                         "Received exit command from %s. Shutting down server.",
                         websocket.remote_address,
                     )
@@ -206,7 +203,7 @@ class WebsocketPolicyServer:
                 prev_total_time = time.monotonic() - start_time
 
             except websockets.ConnectionClosed:
-                logger.info("Connection from %s closed", websocket.remote_address)
+                logging.info("Connection from %s closed", websocket.remote_address)
                 break
             except Exception:
                 await websocket.send(traceback.format_exc())
