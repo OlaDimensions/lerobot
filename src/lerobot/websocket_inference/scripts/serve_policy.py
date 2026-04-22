@@ -84,7 +84,7 @@ class Args:
     port: int = 8000
     seed: int = 1000
 
-    # If provided, will be used when incoming observations omit the "prompt" key.
+    # Optional fallback used only when the client omits the "prompt" key.
     default_prompt: str | None = None
 
     # Similar to async inference: optionally truncate the emitted action chunk.

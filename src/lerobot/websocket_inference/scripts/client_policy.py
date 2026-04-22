@@ -166,7 +166,10 @@ class PolicyClientConfig:
     """Configuration for the WebSocket policy client."""
 
     robot: RobotConfig = field(metadata={"help": "Robot configuration"})
-    task: str = field(default="", metadata={"help": "Task instruction / prompt sent with every observation"})
+    task: str = field(
+        default="",
+        metadata={"help": "Optional task instruction; when empty, the server default prompt is used"},
+    )
     server_host: str = field(default="127.0.0.1", metadata={"help": "WebSocket policy server host"})
     server_port: int = field(default=8000, metadata={"help": "WebSocket policy server port"})
     action_horizon: int = field(
@@ -208,6 +211,17 @@ def main(cfg: PolicyClientConfig) -> None:
     )
     metadata = policy.get_server_metadata()
     logger.info("Connected to policy server | metadata: %s", metadata)
+
+    server_default_prompt = metadata.get("default_prompt")
+    if cfg.task:
+        if isinstance(server_default_prompt, str) and server_default_prompt and server_default_prompt != cfg.task:
+            logger.info("Using client task prompt and overriding server default prompt")
+        else:
+            logger.info("Using client task prompt")
+    elif isinstance(server_default_prompt, str) and server_default_prompt:
+        logger.info("Using server default prompt")
+    else:
+        raise ValueError("No task prompt configured. Set --task on the client or --default-prompt on the server.")
 
     broker = ActionChunkBroker(policy=policy, action_horizon=cfg.action_horizon)
     agent = PolicyAgent(policy=broker)
